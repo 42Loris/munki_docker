@@ -1,0 +1,21 @@
+services:
+  caddy:
+    image: caddy:alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      - MUNKI_DOMAIN=${MUNKI_DOMAIN}
+      - ACME_EMAIL=${ACME_EMAIL}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./certs/ca.crt:/etc/caddy/ca.crt:ro
+      - caddy_data:/data
+      - caddy_config:/config
+      - ${MUNKI_REPO_PATH}:/srv/munki/repo:ro
+
+volumes:
+  caddy_data:
+  caddy_config:

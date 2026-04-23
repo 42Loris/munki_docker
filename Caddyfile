@@ -1,0 +1,11 @@
+{$MUNKI_DOMAIN} {
+    tls {$ACME_EMAIL} {
+        client_auth {
+            mode require_and_verify
+            trusted_ca_certs_pem_file /etc/caddy/ca.crt
+        }
+    }
+
+    root * /srv/munki/repo
+    file_server
+}

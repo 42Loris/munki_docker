@@ -1,0 +1,7 @@
+.env
+certs/
+*.key
+*.pem
+*.crt
+*.p12
+*.mobileconfig
