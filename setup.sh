@@ -20,7 +20,7 @@ fi
 # shellcheck source=/dev/null
 source "$SCRIPT_DIR/.env"
 
-for var in MUNKI_DOMAIN ACME_EMAIL MUNKI_REPO_PATH; do
+for var in MUNKI_DOMAIN ACME_EMAIL MUNKI_REPO_PATH CF_API_TOKEN; do
     if [ -z "${!var:-}" ]; then
         echo "ERROR: $var is not set in .env"
         exit 1

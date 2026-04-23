@@ -16,6 +16,17 @@ services:
       - caddy_config:/config
       - ${MUNKI_REPO_PATH}:/srv/munki/repo:ro
 
+  ddns:
+    image: favonia/cloudflare-ddns:latest
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      - CF_API_TOKEN=${CF_API_TOKEN}
+      - DOMAINS=${MUNKI_DOMAIN}
+      - PROXIED=false
+
 volumes:
   caddy_data:
   caddy_config:
