@@ -29,11 +29,12 @@ openssl x509 -req -days 3650 \
     -out "$CERTS_DIR/$CLIENT_NAME.crt"
 
 echo "Packaging as PKCS#12..."
+P12_PASS=$(openssl rand -hex 16)
 openssl pkcs12 -export \
     -in "$CERTS_DIR/$CLIENT_NAME.crt" \
     -inkey "$CERTS_DIR/$CLIENT_NAME.key" \
     -out "$CERTS_DIR/$CLIENT_NAME.p12" \
-    -passout pass:
+    -passout pass:"$P12_PASS"
 
 rm "$CERTS_DIR/$CLIENT_NAME.csr"
 chmod 600 "$CERTS_DIR/$CLIENT_NAME.key" "$CERTS_DIR/$CLIENT_NAME.p12"
@@ -68,7 +69,7 @@ cat > "$CERTS_DIR/$CLIENT_NAME.mobileconfig" <<EOF
             <key>PayloadVersion</key>
             <integer>1</integer>
             <key>Password</key>
-            <string></string>
+            <string>$P12_PASS</string>
         </dict>
     </array>
     <key>PayloadDescription</key>
