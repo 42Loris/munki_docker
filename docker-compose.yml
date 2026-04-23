@@ -1,6 +1,6 @@
 services:
   caddy:
-    image: caddy:alpine
+    image: caddy:2-alpine
     restart: unless-stopped
     ports:
       - "80:80"
@@ -26,6 +26,7 @@ services:
       - CF_API_TOKEN=${CF_API_TOKEN}
       - DOMAINS=${MUNKI_DOMAIN}
       - PROXIED=false
+      - IP6_PROVIDER=none
 
 volumes:
   caddy_data:
