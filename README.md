@@ -16,7 +16,7 @@ Mac (munkitools)
   └── fetches from https://your-domain/
 
 Caddy
-  ├── terminates TLS (Let's Encrypt)
+  ├── terminates TLS (Let's Encrypt via TLS-ALPN-01)
   ├── verifies client cert against ca.crt
   └── serves /srv/munki/repo as static files
 ```
@@ -25,18 +25,19 @@ Caddy
 
 - Docker with the Compose plugin
 - A domain managed by Cloudflare (see [DNS & DDNS setup](#dns--ddns-setup) below)
-- Ports **80** and **443** reachable on the server (required for Let's Encrypt HTTP-01 challenge)
+- Port **443** reachable on the server (required for Let's Encrypt and HTTPS serving)
+- Port **80** reachable on the server (recommended for HTTP → HTTPS redirects)
 - `openssl` and `python3` installed on the server
 - Intune for deploying the client certificate to Macs
 
-> If the server is behind a NAT/router, forward ports 80 and 443 to it. If you cannot expose port 80, see [DNS-01 challenge](#dns-01-challenge).
+> If the server is behind a NAT/router, forward ports 80 and 443 to it.
 
 ## Setup
 
 ### 1. Clone and configure
 
 ```bash
-git clone https://github.com/your-org/munki_docker_container
+git clone https://github.com/42Loris/munki_docker_container
 cd munki_docker_container
 cp env.example .env
 nano .env
@@ -48,6 +49,7 @@ Fill in `.env`:
 MUNKI_DOMAIN=munki.example.com
 ACME_EMAIL=admin@example.com
 MUNKI_REPO_PATH=/srv/munki/repo
+CF_API_TOKEN=your_cloudflare_api_token
 ```
 
 ### 2. Run setup
@@ -61,7 +63,7 @@ This will:
 - Generate a self-signed CA (`certs/ca.crt`, `certs/ca.key`)
 - Generate a shared client certificate (`certs/munki-client.p12`)
 - Generate an Intune mobileconfig (`certs/munki-client.mobileconfig`)
-- Start the Caddy container
+- Start the Caddy and DDNS containers
 
 ### 3. Deploy the client certificate via Intune
 
@@ -144,10 +146,9 @@ The server uses Cloudflare for DNS management and automatic DDNS (dynamic IP upd
 ### One-time Cloudflare setup
 
 1. Create a free account at [cloudflare.com](https://cloudflare.com)
-2. Add your domain (e.g. `zoppi.systems`) as a site — Cloudflare will scan existing DNS records
-3. Cloudflare gives you two nameservers (e.g. `ada.ns.cloudflare.com`)
-4. Go to your registrar (name.com) → Domain settings → change nameservers to Cloudflare's
-5. In Cloudflare, create an A record: `munki` → your current public IP
+2. Add your domain as a site — Cloudflare will scan existing DNS records
+3. Cloudflare gives you two nameservers — update them at your registrar
+4. In Cloudflare, create an A record: `munki` → your server's public IP
    - Set to **DNS only (gray cloud)** — do NOT enable proxy (orange cloud), it breaks mTLS
 
 ### Cloudflare API token
@@ -156,14 +157,10 @@ The DDNS container updates the A record automatically when your public IP change
 
 1. In Cloudflare: **My Profile → API Tokens → Create Token**
 2. Use the **Edit zone DNS** template
-3. Scope it to your zone only (`zoppi.systems`)
+3. Scope it to your zone only
 4. Copy the token into `.env` as `CF_API_TOKEN`
 
 The DDNS container checks every 5 minutes and updates the record if your IP has changed. No manual intervention needed.
-
-## DNS-01 challenge
-
-If port 80 is not reachable (strict firewall or double-NAT), Caddy can use a DNS challenge for Let's Encrypt. This requires a custom Caddy build with your DNS provider plugin. See [caddy-dns](https://github.com/caddy-dns) for available providers.
 
 ## MunkiWebAdmin
 
