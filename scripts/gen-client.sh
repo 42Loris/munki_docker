@@ -1,6 +1,9 @@
 #!/bin/bash
 # Generates a shared client certificate signed by the local CA.
-# Outputs: munki-client.p12 and munki-client.mobileconfig for Intune deployment.
+# Outputs:
+#   munki-client.pem         — cert+key for Munki's file-based auth
+#   munki-client-deploy.sh   — Intune shell script: deploys PEM to each Mac
+#   munki-prefs.mobileconfig — Munki preference profile (UseClientCertificate + SoftwareRepoURL)
 set -euo pipefail
 
 CERTS_DIR="$(cd "$(dirname "$0")/.." && pwd)/certs"
@@ -9,6 +12,14 @@ CLIENT_NAME="munki-client"
 if [ ! -f "$CERTS_DIR/ca.crt" ] || [ ! -f "$CERTS_DIR/ca.key" ]; then
     echo "ERROR: CA not found. Run scripts/gen-ca.sh first."
     exit 1
+fi
+
+if [ -z "${MUNKI_DOMAIN:-}" ]; then
+    SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+    if [ -f "$SCRIPT_DIR/.env" ]; then
+        # shellcheck source=/dev/null
+        source "$SCRIPT_DIR/.env"
+    fi
 fi
 
 echo "Generating client private key..."
@@ -28,23 +39,38 @@ openssl x509 -req -days 3650 \
     -CAcreateserial \
     -out "$CERTS_DIR/$CLIENT_NAME.crt"
 
-echo "Packaging as PKCS#12..."
-P12_PASS=$(openssl rand -hex 16)
-openssl pkcs12 -export \
-    -in "$CERTS_DIR/$CLIENT_NAME.crt" \
-    -inkey "$CERTS_DIR/$CLIENT_NAME.key" \
-    -out "$CERTS_DIR/$CLIENT_NAME.p12" \
-    -passout pass:"$P12_PASS"
-
 rm "$CERTS_DIR/$CLIENT_NAME.csr"
-chmod 600 "$CERTS_DIR/$CLIENT_NAME.key" "$CERTS_DIR/$CLIENT_NAME.p12"
+chmod 600 "$CERTS_DIR/$CLIENT_NAME.key"
 
-echo "Generating Intune mobileconfig..."
-P12_B64=$(base64 < "$CERTS_DIR/$CLIENT_NAME.p12")
+echo "Creating concatenated PEM (cert + key) for Munki..."
+cat "$CERTS_DIR/$CLIENT_NAME.crt" "$CERTS_DIR/$CLIENT_NAME.key" > "$CERTS_DIR/$CLIENT_NAME.pem"
+chmod 600 "$CERTS_DIR/$CLIENT_NAME.pem"
+
+echo "Generating Intune deployment script..."
+PEM_B64=$(base64 < "$CERTS_DIR/$CLIENT_NAME.pem")
+
+cat > "$CERTS_DIR/$CLIENT_NAME-deploy.sh" <<DEPLOY
+#!/bin/bash
+# Intune shell script: deploys Munki client certificate to each Mac.
+# Run as: root
+set -euo pipefail
+
+CERTS_DIR="/Library/Managed Installs/certs"
+mkdir -p "\$CERTS_DIR"
+
+echo "$PEM_B64" | base64 --decode > "\$CERTS_DIR/munki.pem"
+chmod 600 "\$CERTS_DIR/munki.pem"
+
+echo "Munki client cert deployed to \$CERTS_DIR/munki.pem"
+DEPLOY
+chmod 600 "$CERTS_DIR/$CLIENT_NAME-deploy.sh"
+
+echo "Generating Munki preferences mobileconfig..."
 PROFILE_UUID=$(python3 -c "import uuid; print(str(uuid.uuid4()).upper())")
 PAYLOAD_UUID=$(python3 -c "import uuid; print(str(uuid.uuid4()).upper())")
+MUNKI_DOMAIN="${MUNKI_DOMAIN:-munki.example.com}"
 
-cat > "$CERTS_DIR/$CLIENT_NAME.mobileconfig" <<EOF
+cat > "$CERTS_DIR/munki-prefs.mobileconfig" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -52,32 +78,46 @@ cat > "$CERTS_DIR/$CLIENT_NAME.mobileconfig" <<EOF
     <key>PayloadContent</key>
     <array>
         <dict>
-            <key>PayloadCertificateFileName</key>
-            <string>$CLIENT_NAME.p12</string>
-            <key>PayloadContent</key>
-            <data>$P12_B64</data>
-            <key>PayloadDescription</key>
-            <string>Munki client certificate for mTLS authentication</string>
-            <key>PayloadDisplayName</key>
-            <string>Munki Client Certificate</string>
-            <key>PayloadIdentifier</key>
-            <string>systems.zoppi.munki.client-cert</string>
             <key>PayloadType</key>
-            <string>com.apple.security.pkcs12</string>
+            <string>com.apple.ManagedClient.preferences</string>
             <key>PayloadUUID</key>
             <string>$PAYLOAD_UUID</string>
+            <key>PayloadIdentifier</key>
+            <string>systems.zoppi.munki.prefs</string>
+            <key>PayloadDisplayName</key>
+            <string>Munki Preferences</string>
             <key>PayloadVersion</key>
             <integer>1</integer>
-            <key>Password</key>
-            <string>$P12_PASS</string>
+            <key>PayloadEnabled</key>
+            <true/>
+            <key>PayloadContent</key>
+            <dict>
+                <key>ManagedInstalls</key>
+                <dict>
+                    <key>Forced</key>
+                    <array>
+                        <dict>
+                            <key>mcx_preference_settings</key>
+                            <dict>
+                                <key>SoftwareRepoURL</key>
+                                <string>https://$MUNKI_DOMAIN</string>
+                                <key>UseClientCertificate</key>
+                                <true/>
+                                <key>ClientCertificatePath</key>
+                                <string>/Library/Managed Installs/certs/munki.pem</string>
+                            </dict>
+                        </dict>
+                    </array>
+                </dict>
+            </dict>
         </dict>
     </array>
     <key>PayloadDescription</key>
-    <string>Installs the Munki client certificate for mTLS authentication</string>
+    <string>Munki configuration: repo URL and client certificate auth</string>
     <key>PayloadDisplayName</key>
-    <string>Munki Client Certificate</string>
+    <string>Munki Preferences</string>
     <key>PayloadIdentifier</key>
-    <string>systems.zoppi.munki.profile</string>
+    <string>systems.zoppi.munki.prefs.profile</string>
     <key>PayloadOrganization</key>
     <string>Internal</string>
     <key>PayloadRemovalDisallowed</key>
@@ -94,7 +134,10 @@ EOF
 
 echo ""
 echo "Client cert generated:"
-echo "  PKCS#12      : $CERTS_DIR/$CLIENT_NAME.p12"
-echo "  Intune profile: $CERTS_DIR/$CLIENT_NAME.mobileconfig"
+echo "  PEM file       : $CERTS_DIR/$CLIENT_NAME.pem"
+echo "  Deploy script  : $CERTS_DIR/$CLIENT_NAME-deploy.sh"
+echo "  Munki prefs    : $CERTS_DIR/munki-prefs.mobileconfig"
 echo ""
-echo "Upload $CLIENT_NAME.mobileconfig to Intune as a custom macOS configuration profile."
+echo "Intune deployment:"
+echo "  1. Upload $CLIENT_NAME-deploy.sh as a macOS shell script (run as root)"
+echo "  2. Upload munki-prefs.mobileconfig as a custom macOS configuration profile"
