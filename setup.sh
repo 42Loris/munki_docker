@@ -63,7 +63,7 @@ echo ""
 
 # 5. Generate client cert + mobileconfig
 echo "--- Client Certificate ---"
-if [ -f "$SCRIPT_DIR/certs/munki-client.p12" ]; then
+if [ -f "$SCRIPT_DIR/certs/munki-client.mobileconfig" ]; then
     echo "Client cert already exists — skipping. Run scripts/gen-client.sh to regenerate."
 else
     bash "$SCRIPT_DIR/scripts/gen-client.sh"
@@ -79,7 +79,7 @@ echo "=== Setup complete ==="
 echo ""
 echo "Next steps:"
 echo "  1. Upload certs/munki-client.mobileconfig to Intune as a custom macOS profile"
-echo "  2. Set SoftwareRepoURL to https://$MUNKI_DOMAIN in your Munki config profile"
-echo "  3. Add packages to $MUNKI_REPO_PATH/pkgs/ and run makecatalogs"
+echo "     (contains client cert + SoftwareRepoURL — one upload, done)"
+echo "  2. Add packages to $MUNKI_REPO_PATH/pkgs/ and run makecatalogs"
 echo ""
 echo "Logs: docker compose logs -f"
