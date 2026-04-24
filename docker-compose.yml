@@ -16,6 +16,18 @@ services:
       - caddy_config:/config
       - ${MUNKI_REPO_PATH}:/srv/munki/repo:ro
 
+  samba:
+    image: dperson/samba:latest
+    restart: unless-stopped
+    ports:
+      - "139:139"
+      - "445:445"
+    command: >-
+      -u "${SAMBA_USER};${SAMBA_PASS}"
+      -s "munki;/srv/munki/repo;yes;no;no;${SAMBA_USER}"
+    volumes:
+      - ${MUNKI_REPO_PATH}:/srv/munki/repo
+
   ddns:
     image: favonia/cloudflare-ddns:latest
     restart: unless-stopped
