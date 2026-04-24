@@ -43,11 +43,15 @@ chmod 600 "$CERTS_DIR/$CLIENT_NAME.key"
 
 echo "Packaging as PKCS#12..."
 P12_PASS=$(openssl rand -hex 16)
+# macOS Security framework requires legacy 3DES encryption (PBES1).
+# OpenSSL 3.x defaults to AES-256 which macOS silently rejects during MDM install.
 openssl pkcs12 -export \
     -inkey "$CERTS_DIR/$CLIENT_NAME.key" \
     -in "$CERTS_DIR/$CLIENT_NAME.crt" \
-    -certfile "$CERTS_DIR/ca.crt" \
     -passout "pass:$P12_PASS" \
+    -keypbe PBE-SHA1-3DES \
+    -certpbe PBE-SHA1-3DES \
+    -macalg sha1 \
     -out "$CERTS_DIR/$CLIENT_NAME.p12"
 chmod 600 "$CERTS_DIR/$CLIENT_NAME.p12"
 
