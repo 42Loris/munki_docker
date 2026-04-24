@@ -64,24 +64,34 @@ bash setup.sh
 This will:
 - Create the munki repo directory structure at `MUNKI_REPO_PATH`
 - Generate a self-signed CA (`certs/ca.crt`, `certs/ca.key`)
-- Generate a shared PKCS#12 client certificate (`certs/munki-client.p12`)
-- Generate a combined Intune mobileconfig (`certs/munki-client.mobileconfig`)
+- Generate a shared client certificate PEM (`certs/munki-client.pem`)
+- Generate an Intune shell script (`certs/munki-client-deploy.sh`)
+- Generate a Munki preferences profile (`certs/munki-prefs.mobileconfig`)
 - Start the Caddy, Samba, and DDNS containers
 
 ### 3. Deploy the client certificate via Intune
 
-1. In Intune, go to **Devices > macOS > Configuration profiles > Create profile**
-2. Platform: **macOS**, Profile type: **Templates > Custom**
-3. Upload `certs/munki-client.mobileconfig`
+Two uploads to Intune — both assigned to the same Mac device group.
+
+**Upload 1 — Shell script (deploys the cert file):**
+
+1. Intune → **Devices > macOS > Shell scripts > Add**
+2. Upload `certs/munki-client-deploy.sh`
+3. Run script as signed-in user: **No** (runs as root)
 4. Assign to your Mac device group
 
-The mobileconfig installs two things silently:
-- The client certificate into the **System keychain**
-- Munki preferences: `SoftwareRepoURL` (and `ClientIdentifier` if set in `.env`)
+This drops `munki_client.pem` onto each Mac at `/Library/Managed Installs/certs/munki_client.pem` as root, permissions 0600.
 
-Munki 7 uses `NSURLSession`, which automatically picks up the System keychain cert during the mTLS handshake. No `UseClientCertificate` preference is needed.
+**Upload 2 — Configuration profile (sets Munki preferences):**
 
-> **ClientIdentifier** identifies a Mac to Munki (determines which manifest it receives). If left unset, Munki defaults to the machine's serial number. Set `MUNKI_CLIENT_IDENTIFIER` in `.env` before running `setup.sh` if you want a fixed identifier embedded in the profile — otherwise adjust it per-deployment via a separate Munki prefs profile or `defaults write`.
+1. Intune → **Devices > macOS > Configuration profiles > Create profile**
+2. Platform: **macOS**, Profile type: **Templates > Custom**
+3. Upload `certs/munki-prefs.mobileconfig`
+4. Assign to your Mac device group
+
+This sets `SoftwareRepoURL`, `UseClientCertificate = true`, and `ClientCertificatePath` so Munki knows where to find the cert file.
+
+> **ClientIdentifier** determines which Munki manifest a Mac receives. If left unset, Munki defaults to the machine's serial number. Set `MUNKI_CLIENT_IDENTIFIER` in `.env` before running `setup.sh` to embed a fixed value in the profile.
 
 ## Repo structure
 
@@ -140,8 +150,8 @@ rm certs/munki-client.*
 bash scripts/gen-client.sh
 ```
 
-Then re-upload `certs/munki-client.mobileconfig` to Intune and reassign the profile.
-All Macs will receive the new cert and preferences on the next MDM sync.
+Then re-upload both `certs/munki-client-deploy.sh` and `certs/munki-prefs.mobileconfig` to Intune.
+Macs will receive the new cert on the next shell script run and MDM sync.
 
 ### Regenerate everything (CA + client cert)
 
