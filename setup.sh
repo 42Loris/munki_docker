@@ -52,6 +52,7 @@ mkdir -p \
     "$MUNKI_REPO_PATH/manifests" \
     "$MUNKI_REPO_PATH/pkgs" \
     "$MUNKI_REPO_PATH/pkgsinfo"
+chmod -R 777 "$MUNKI_REPO_PATH"
 echo "  $MUNKI_REPO_PATH/{catalogs,icons,manifests,pkgs,pkgsinfo}"
 echo ""
 
