@@ -48,7 +48,8 @@ openssl pkcs12 -export \
     -inkey "$CERTS_DIR/$ADMIN_NAME.key" \
     -certfile "$CERTS_DIR/ca.crt" \
     -out "$CERTS_DIR/$ADMIN_NAME.p12" \
-    -passout "pass:$P12_PASS"
+    -passout "pass:$P12_PASS" \
+    -legacy
 
 chmod 600 "$CERTS_DIR/$ADMIN_NAME.p12"
 
