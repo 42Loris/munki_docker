@@ -1,8 +1,9 @@
 #!/bin/bash
 # Generates an admin client certificate for WebDAV access.
 # Outputs:
-#   certs/munki-admin.p12        — cert+key bundle for manual keychain install
-#   certs/munki-admin.mobileconfig — Intune config profile: installs cert into keychain
+#   certs/munki-admin.p12              — cert+key bundle (for manual install if needed)
+#   certs/munki-admin-deploy.sh        — Intune shell script: imports cert into System keychain
+#   certs/intune_upload/munki-admin-deploy.sh  — copy ready for Intune upload
 set -euo pipefail
 
 CERTS_DIR="$(cd "$(dirname "$0")/.." && pwd)/certs"
@@ -39,7 +40,6 @@ openssl x509 -req -days 3650 \
 rm "$CERTS_DIR/$ADMIN_NAME.csr"
 chmod 600 "$CERTS_DIR/$ADMIN_NAME.key"
 
-# Generate random p12 export password
 P12_PASS=$(openssl rand -base64 24)
 
 echo "Exporting .p12 bundle..."
@@ -52,70 +52,52 @@ openssl pkcs12 -export \
 
 chmod 600 "$CERTS_DIR/$ADMIN_NAME.p12"
 
-echo "Generating Intune mobileconfig..."
-PROFILE_UUID=$(python3 -c "import uuid; print(str(uuid.uuid4()).upper())")
-PAYLOAD_UUID=$(python3 -c "import uuid; print(str(uuid.uuid4()).upper())")
+echo "Generating Intune deploy script..."
 P12_B64=$(base64 < "$CERTS_DIR/$ADMIN_NAME.p12")
 
-cat > "$CERTS_DIR/$ADMIN_NAME.mobileconfig" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>PayloadContent</key>
-    <array>
-        <dict>
-            <key>PayloadType</key>
-            <string>com.apple.security.pkcs12</string>
-            <key>PayloadUUID</key>
-            <string>$PAYLOAD_UUID</string>
-            <key>PayloadIdentifier</key>
-            <string>systems.zoppi.munki.admin-cert</string>
-            <key>PayloadDisplayName</key>
-            <string>Munki Admin Certificate</string>
-            <key>PayloadVersion</key>
-            <integer>1</integer>
-            <key>Password</key>
-            <string>$P12_PASS</string>
-            <key>PayloadContent</key>
-            <data>
+cat > "$CERTS_DIR/$ADMIN_NAME-deploy.sh" <<DEPLOY
+#!/bin/bash
+# Intune shell script: imports Munki admin certificate into System keychain.
+# Upload to Intune as a macOS shell script, run as: root
+# Scope to Admins group only.
+set -euo pipefail
+
+P12_PASS="$P12_PASS"
+
+P12_TMP=\$(mktemp /tmp/munki-admin.XXXXXX.p12)
+
+base64 --decode > "\$P12_TMP" <<'PKCS12EOF'
 $P12_B64
-            </data>
-        </dict>
-    </array>
-    <key>PayloadDescription</key>
-    <string>Installs the Munki admin client certificate for WebDAV access.</string>
-    <key>PayloadDisplayName</key>
-    <string>Munki Admin Certificate</string>
-    <key>PayloadIdentifier</key>
-    <string>systems.zoppi.munki.admin-cert.profile</string>
-    <key>PayloadOrganization</key>
-    <string>Internal</string>
-    <key>PayloadRemovalDisallowed</key>
-    <false/>
-    <key>PayloadType</key>
-    <string>Configuration</string>
-    <key>PayloadUUID</key>
-    <string>$PROFILE_UUID</string>
-    <key>PayloadVersion</key>
-    <integer>1</integer>
-</dict>
-</plist>
-EOF
+PKCS12EOF
+
+security import "\$P12_TMP" \\
+    -k /Library/Keychains/System.keychain \\
+    -P "\$P12_PASS" \\
+    -T /System/Library/CoreServices/Finder.app \\
+    -T /usr/bin/curl \\
+    -A
+
+rm "\$P12_TMP"
+echo "Munki admin cert imported into System keychain."
+DEPLOY
+
+chmod 600 "$CERTS_DIR/$ADMIN_NAME-deploy.sh"
+
+mkdir -p "$CERTS_DIR/intune_upload"
+cp "$CERTS_DIR/$ADMIN_NAME-deploy.sh" "$CERTS_DIR/intune_upload/$ADMIN_NAME-deploy.sh"
 
 echo ""
 echo "Admin cert generated:"
-echo "  .p12             : $CERTS_DIR/$ADMIN_NAME.p12"
-echo "  mobileconfig     : $CERTS_DIR/$ADMIN_NAME.mobileconfig"
-echo "  .p12 password    : $P12_PASS  (embedded in mobileconfig — keep both files secret)"
+echo "  .p12          : $CERTS_DIR/$ADMIN_NAME.p12"
+echo "  deploy script : $CERTS_DIR/$ADMIN_NAME-deploy.sh"
+echo "  .p12 password : $P12_PASS  (embedded in deploy script — keep files secret)"
 echo ""
 echo "Intune deployment (scope to Admins group only):"
-echo "  Devices > macOS > Configuration profiles > Create profile"
-echo "  Platform: macOS — Profile type: Templates > Custom"
-echo "  Upload: $ADMIN_NAME.mobileconfig"
+echo "  Devices > macOS > Shell scripts > Add"
+echo "  Upload: intune_upload/$ADMIN_NAME-deploy.sh  (run as root)"
 echo ""
-echo "  macOS will install the cert into the Login keychain."
+echo "  macOS imports the cert into the System keychain."
 echo "  Finder and MunkiAdmin will present it automatically for mTLS."
 echo ""
-echo "Manual install (alternative to Intune):"
+echo "Manual install (alternative):"
 echo "  Double-click $ADMIN_NAME.p12 and enter the password above."

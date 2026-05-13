@@ -68,18 +68,28 @@ This will:
 - Create the munki repo directory structure at `MUNKI_REPO_PATH`
 - Generate a self-signed CA (`certs/ca.crt`, `certs/ca.key`)
 - Generate the munki client cert + Intune shell script + Munki preferences profile
-- Generate the admin client cert + `.p12` + Intune config profile
+- Generate the admin client cert + Intune shell script (imports into System keychain)
 - Generate the GitHub Actions cert + print base64 values for GitHub secrets
 - Start the Caddy, Apache httpd, and DDNS containers
 
+All files needed for Intune are copied to `certs/intune_upload/` automatically.
+
 ### 3. Deploy certificates via Intune
+
+All uploads come from `certs/intune_upload/`:
+
+| File | Intune section | Scope |
+|---|---|---|
+| `munki-client-deploy.sh` | Devices > macOS > Shell scripts (run as root) | All managed Macs |
+| `munki-prefs.mobileconfig` | Devices > macOS > Configuration profiles > Custom | All managed Macs |
+| `munki-admin-deploy.sh` | Devices > macOS > Shell scripts (run as root) | Admins group only |
 
 #### Mac clients — all managed Macs
 
 **Upload 1 — Shell script (deploys cert file):**
 
 1. Intune → **Devices > macOS > Shell scripts > Add**
-2. Upload `certs/munki-client-deploy.sh`
+2. Upload `certs/intune_upload/munki-client-deploy.sh`
 3. Run script as signed-in user: **No** (runs as root)
 4. Assign to your Mac device group
 
@@ -87,21 +97,21 @@ This will:
 
 1. Intune → **Devices > macOS > Configuration profiles > Create profile**
 2. Platform: **macOS**, Profile type: **Templates > Custom**
-3. Upload `certs/munki-prefs.mobileconfig`
+3. Upload `certs/intune_upload/munki-prefs.mobileconfig`
 4. Assign to your Mac device group
 
 #### Admin Macs — Admins group only
 
-**Upload 3 — Configuration profile (installs admin cert into keychain):**
+**Upload 3 — Shell script (imports admin cert into System keychain):**
 
-1. Intune → **Devices > macOS > Configuration profiles > Create profile**
-2. Platform: **macOS**, Profile type: **Templates > Custom**
-3. Upload `certs/munki-admin.mobileconfig`
+1. Intune → **Devices > macOS > Shell scripts > Add**
+2. Upload `certs/intune_upload/munki-admin-deploy.sh`
+3. Run script as signed-in user: **No** (runs as root)
 4. **Scope to your Admins device/user group only** — do not assign to all Macs
 
-Once deployed, macOS installs the cert into the Login keychain. Finder and MunkiAdmin present it automatically for mTLS — no password prompt.
+macOS imports the cert into the System keychain. Finder and MunkiAdmin present it automatically for mTLS — no password prompt.
 
-> **Manual alternative:** Double-click `certs/munki-admin.p12` and enter the password printed by `gen-admin.sh` to install it manually into your keychain.
+> **Manual alternative:** Double-click `certs/munki-admin.p12` and enter the password printed by `gen-admin.sh` to install it into your keychain.
 
 ### 4. Connect as admin
 
@@ -192,7 +202,7 @@ rm certs/munki-admin.*
 bash scripts/gen-admin.sh
 ```
 
-Re-upload `certs/munki-admin.mobileconfig` to Intune. Macs will receive the new cert on the next MDM sync.
+Re-upload `certs/intune_upload/munki-admin-deploy.sh` to Intune. Macs will receive the new cert on the next shell script run.
 
 ### Regenerate GitHub Actions certificate
 

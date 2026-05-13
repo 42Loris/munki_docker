@@ -143,6 +143,10 @@ cat > "$CERTS_DIR/munki-prefs.mobileconfig" <<EOF
 </plist>
 EOF
 
+mkdir -p "$CERTS_DIR/intune_upload"
+cp "$CERTS_DIR/$CLIENT_NAME-deploy.sh" "$CERTS_DIR/intune_upload/$CLIENT_NAME-deploy.sh"
+cp "$CERTS_DIR/munki-prefs.mobileconfig" "$CERTS_DIR/intune_upload/munki-prefs.mobileconfig"
+
 echo ""
 echo "Client cert generated:"
 echo "  Deploy script  : $CERTS_DIR/$CLIENT_NAME-deploy.sh"
@@ -150,6 +154,6 @@ echo "  Munki prefs    : $CERTS_DIR/munki-prefs.mobileconfig"
 echo ""
 echo "Intune deployment (two uploads):"
 echo "  1. Devices > macOS > Shell scripts > Add"
-echo "     Upload: $CLIENT_NAME-deploy.sh  (run as root)"
+echo "     Upload: intune_upload/$CLIENT_NAME-deploy.sh  (run as root)"
 echo "  2. Devices > macOS > Configuration profiles > Create > Custom"
-echo "     Upload: munki-prefs.mobileconfig"
+echo "     Upload: intune_upload/munki-prefs.mobileconfig"
