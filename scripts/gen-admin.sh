@@ -2,7 +2,7 @@
 # Generates an admin client certificate for WebDAV access.
 # Outputs:
 #   certs/munki-admin.p12                    — cert+key bundle (for manual install if needed)
-#   certs/mdm_upload/munki-admin-deploy.sh   — MDM shell script: imports cert into System keychain
+#   certs/mdm_upload/munki-admin-deploy.sh   — MDM shell script: imports cert into Login keychain
 set -euo pipefail
 
 CERTS_DIR="$(cd "$(dirname "$0")/.." && pwd)/certs"
@@ -67,14 +67,14 @@ set -euo pipefail
 
 P12_PASS="$P12_PASS"
 
-P12_TMP=\$(mktemp /tmp/munki-admin.XXXXXX)
+P12_TMP=/tmp/munki-admin.p12
 
 base64 --decode > "\$P12_TMP" <<'PKCS12EOF'
 $P12_B64
 PKCS12EOF
 
 security import "\$P12_TMP" \\
-    -k /Library/Keychains/System.keychain \\
+    -k ~/Library/Keychains/login.keychain-db \\
     -P "\$P12_PASS" \\
     -T /System/Library/CoreServices/Finder.app \\
     -T /usr/bin/curl \\
@@ -96,7 +96,7 @@ echo "MDM deployment (scope to Admins group only):"
 echo "  Devices > macOS > Shell scripts > Add"
 echo "  Upload: certs/mdm_upload/$ADMIN_NAME-deploy.sh  (run as root)"
 echo ""
-echo "  macOS imports the cert into the System keychain."
+echo "  macOS imports the cert into the user's Login keychain."
 echo "  Finder and MunkiAdmin will present it automatically for mTLS."
 echo ""
 echo "Manual install (alternative):"
