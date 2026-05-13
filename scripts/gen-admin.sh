@@ -64,7 +64,7 @@ set -euo pipefail
 
 P12_PASS="$P12_PASS"
 
-P12_TMP=\$(mktemp /tmp/munki-admin.XXXXXX.p12)
+P12_TMP=\$(mktemp /tmp/munki-admin.XXXXXX)
 
 base64 --decode > "\$P12_TMP" <<'PKCS12EOF'
 $P12_B64
