@@ -1,12 +1,13 @@
 #!/bin/bash
 # Generates a shared client certificate signed by the local CA.
 # Outputs:
-#   munki-client.pem         — cert+key PEM (stays on server, never distribute directly)
-#   munki-client-deploy.sh   — Intune shell script: deploys PEM to each Mac as root
-#   munki-prefs.mobileconfig — Munki preference profile (SoftwareRepoURL + cert path)
+#   certs/munki-client.pem                       — cert+key PEM (server-side, never distribute directly)
+#   certs/mdm_upload/munki-client-deploy.sh      — MDM shell script: deploys PEM to each Mac as root
+#   certs/mdm_upload/munki-prefs.mobileconfig    — Munki preference profile (SoftwareRepoURL + cert path)
 set -euo pipefail
 
 CERTS_DIR="$(cd "$(dirname "$0")/.." && pwd)/certs"
+MDM_DIR="$CERTS_DIR/mdm_upload"
 CLIENT_NAME="munki-client"
 
 if [ ! -f "$CERTS_DIR/ca.crt" ] || [ ! -f "$CERTS_DIR/ca.key" ]; then
@@ -46,10 +47,12 @@ echo "Creating PEM (cert + key) for Munki..."
 cat "$CERTS_DIR/$CLIENT_NAME.crt" "$CERTS_DIR/$CLIENT_NAME.key" > "$CERTS_DIR/$CLIENT_NAME.pem"
 chmod 600 "$CERTS_DIR/$CLIENT_NAME.pem"
 
-echo "Generating Intune deployment script..."
+echo "Generating MDM deployment script..."
 PEM_B64=$(base64 < "$CERTS_DIR/$CLIENT_NAME.pem")
 
-cat > "$CERTS_DIR/$CLIENT_NAME-deploy.sh" <<DEPLOY
+mkdir -p "$MDM_DIR"
+
+cat > "$MDM_DIR/$CLIENT_NAME-deploy.sh" <<DEPLOY
 #!/bin/bash
 # Intune shell script: deploys Munki client certificate to each Mac.
 # Upload to Intune as a macOS shell script, run as: root
@@ -69,6 +72,7 @@ echo "Munki client cert deployed to \$CERT_DIR/munki_client.pem"
 DEPLOY
 
 echo "Generating Munki preferences mobileconfig..."
+mkdir -p "$MDM_DIR"
 PROFILE_UUID=$(python3 -c "import uuid; print(str(uuid.uuid4()).upper())")
 PAYLOAD_UUID=$(python3 -c "import uuid; print(str(uuid.uuid4()).upper())")
 MUNKI_DOMAIN="${MUNKI_DOMAIN:-munki.example.com}"
@@ -81,7 +85,7 @@ if [ -n "${MUNKI_CLIENT_IDENTIFIER:-}" ]; then
                                 <string>${MUNKI_CLIENT_IDENTIFIER}</string>"
 fi
 
-cat > "$CERTS_DIR/munki-prefs.mobileconfig" <<EOF
+cat > "$MDM_DIR/munki-prefs.mobileconfig" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -143,17 +147,14 @@ cat > "$CERTS_DIR/munki-prefs.mobileconfig" <<EOF
 </plist>
 EOF
 
-mkdir -p "$CERTS_DIR/intune_upload"
-cp "$CERTS_DIR/$CLIENT_NAME-deploy.sh" "$CERTS_DIR/intune_upload/$CLIENT_NAME-deploy.sh"
-cp "$CERTS_DIR/munki-prefs.mobileconfig" "$CERTS_DIR/intune_upload/munki-prefs.mobileconfig"
-
 echo ""
 echo "Client cert generated:"
-echo "  Deploy script  : $CERTS_DIR/$CLIENT_NAME-deploy.sh"
-echo "  Munki prefs    : $CERTS_DIR/munki-prefs.mobileconfig"
+echo "  PEM            : $CERTS_DIR/$CLIENT_NAME.pem"
+echo "  Deploy script  : $MDM_DIR/$CLIENT_NAME-deploy.sh"
+echo "  Munki prefs    : $MDM_DIR/munki-prefs.mobileconfig"
 echo ""
-echo "Intune deployment (two uploads):"
+echo "MDM deployment (two uploads):"
 echo "  1. Devices > macOS > Shell scripts > Add"
-echo "     Upload: intune_upload/$CLIENT_NAME-deploy.sh  (run as root)"
+echo "     Upload: certs/mdm_upload/$CLIENT_NAME-deploy.sh  (run as root)"
 echo "  2. Devices > macOS > Configuration profiles > Create > Custom"
-echo "     Upload: intune_upload/munki-prefs.mobileconfig"
+echo "     Upload: certs/mdm_upload/munki-prefs.mobileconfig"

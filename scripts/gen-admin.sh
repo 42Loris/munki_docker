@@ -1,12 +1,12 @@
 #!/bin/bash
 # Generates an admin client certificate for WebDAV access.
 # Outputs:
-#   certs/munki-admin.p12              — cert+key bundle (for manual install if needed)
-#   certs/munki-admin-deploy.sh        — Intune shell script: imports cert into System keychain
-#   certs/intune_upload/munki-admin-deploy.sh  — copy ready for Intune upload
+#   certs/munki-admin.p12                    — cert+key bundle (for manual install if needed)
+#   certs/mdm_upload/munki-admin-deploy.sh   — MDM shell script: imports cert into System keychain
 set -euo pipefail
 
 CERTS_DIR="$(cd "$(dirname "$0")/.." && pwd)/certs"
+MDM_DIR="$CERTS_DIR/mdm_upload"
 ADMIN_NAME="munki-admin"
 
 if [ ! -f "$CERTS_DIR/ca.crt" ] || [ ! -f "$CERTS_DIR/ca.key" ]; then
@@ -52,13 +52,15 @@ openssl pkcs12 -export \
 
 chmod 600 "$CERTS_DIR/$ADMIN_NAME.p12"
 
-echo "Generating Intune deploy script..."
+echo "Generating MDM deploy script..."
 P12_B64=$(base64 < "$CERTS_DIR/$ADMIN_NAME.p12")
 
-cat > "$CERTS_DIR/$ADMIN_NAME-deploy.sh" <<DEPLOY
+mkdir -p "$MDM_DIR"
+
+cat > "$MDM_DIR/$ADMIN_NAME-deploy.sh" <<DEPLOY
 #!/bin/bash
-# Intune shell script: imports Munki admin certificate into System keychain.
-# Upload to Intune as a macOS shell script, run as: root
+# MDM shell script: imports Munki admin certificate into System keychain.
+# Upload to your MDM as a macOS shell script, run as: root
 # Scope to Admins group only.
 set -euo pipefail
 
@@ -81,20 +83,17 @@ rm "\$P12_TMP"
 echo "Munki admin cert imported into System keychain."
 DEPLOY
 
-chmod 600 "$CERTS_DIR/$ADMIN_NAME-deploy.sh"
-
-mkdir -p "$CERTS_DIR/intune_upload"
-cp "$CERTS_DIR/$ADMIN_NAME-deploy.sh" "$CERTS_DIR/intune_upload/$ADMIN_NAME-deploy.sh"
+chmod 600 "$MDM_DIR/$ADMIN_NAME-deploy.sh"
 
 echo ""
 echo "Admin cert generated:"
 echo "  .p12          : $CERTS_DIR/$ADMIN_NAME.p12"
-echo "  deploy script : $CERTS_DIR/$ADMIN_NAME-deploy.sh"
 echo "  .p12 password : $P12_PASS  (embedded in deploy script — keep files secret)"
+echo "  deploy script : $MDM_DIR/$ADMIN_NAME-deploy.sh"
 echo ""
-echo "Intune deployment (scope to Admins group only):"
+echo "MDM deployment (scope to Admins group only):"
 echo "  Devices > macOS > Shell scripts > Add"
-echo "  Upload: intune_upload/$ADMIN_NAME-deploy.sh  (run as root)"
+echo "  Upload: certs/mdm_upload/$ADMIN_NAME-deploy.sh  (run as root)"
 echo ""
 echo "  macOS imports the cert into the System keychain."
 echo "  Finder and MunkiAdmin will present it automatically for mTLS."

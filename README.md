@@ -72,11 +72,11 @@ This will:
 - Generate the GitHub Actions cert + print base64 values for GitHub secrets
 - Start the Caddy, Apache httpd, and DDNS containers
 
-All files needed for Intune are copied to `certs/intune_upload/` automatically.
+All files needed for Intune are copied to `certs/mdm_upload/` automatically — one place for everything you need to upload to your MDM.
 
 ### 3. Deploy certificates via Intune
 
-All uploads come from `certs/intune_upload/`:
+All uploads come from `certs/mdm_upload/`:
 
 | File | Intune section | Scope |
 |---|---|---|
@@ -89,7 +89,7 @@ All uploads come from `certs/intune_upload/`:
 **Upload 1 — Shell script (deploys cert file):**
 
 1. Intune → **Devices > macOS > Shell scripts > Add**
-2. Upload `certs/intune_upload/munki-client-deploy.sh`
+2. Upload `certs/mdm_upload/munki-client-deploy.sh`
 3. Run script as signed-in user: **No** (runs as root)
 4. Assign to your Mac device group
 
@@ -97,7 +97,7 @@ All uploads come from `certs/intune_upload/`:
 
 1. Intune → **Devices > macOS > Configuration profiles > Create profile**
 2. Platform: **macOS**, Profile type: **Templates > Custom**
-3. Upload `certs/intune_upload/munki-prefs.mobileconfig`
+3. Upload `certs/mdm_upload/munki-prefs.mobileconfig`
 4. Assign to your Mac device group
 
 #### Admin Macs — Admins group only
@@ -105,7 +105,7 @@ All uploads come from `certs/intune_upload/`:
 **Upload 3 — Shell script (imports admin cert into System keychain):**
 
 1. Intune → **Devices > macOS > Shell scripts > Add**
-2. Upload `certs/intune_upload/munki-admin-deploy.sh`
+2. Upload `certs/mdm_upload/munki-admin-deploy.sh`
 3. Run script as signed-in user: **No** (runs as root)
 4. **Scope to your Admins device/user group only** — do not assign to all Macs
 
@@ -202,7 +202,7 @@ rm certs/munki-admin.*
 bash scripts/gen-admin.sh
 ```
 
-Re-upload `certs/intune_upload/munki-admin-deploy.sh` to Intune. Macs will receive the new cert on the next shell script run.
+Re-upload `certs/mdm_upload/munki-admin-deploy.sh` to Intune. Macs will receive the new cert on the next shell script run.
 
 ### Regenerate GitHub Actions certificate
 
