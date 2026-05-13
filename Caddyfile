@@ -11,3 +11,16 @@
     root * /srv/munki/repo
     file_server
 }
+
+{$MANAGE_DOMAIN} {
+    tls {$ACME_EMAIL} {
+        client_auth {
+            mode require_and_verify
+            trust_pool file {
+                pem_file /etc/caddy/ca.crt
+            }
+        }
+    }
+
+    reverse_proxy webdav:80
+}

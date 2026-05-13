@@ -1,34 +1,38 @@
 # Munki Docker Container
 
-A self-hosted [Munki](https://github.com/munki/munki) server running on Docker. Serves the munki repo over HTTPS with mTLS client certificate authentication.
+A self-hosted [Munki](https://github.com/munki/munki) server running on Docker. Serves the munki repo over HTTPS with mTLS client certificate authentication. Provides a WebDAV management endpoint for admin access and GitHub Actions automation.
 
-**Stack:** Caddy (TLS termination + mTLS + static file serving) — no nginx, no certbot sidecar needed.
+**Stack:** Caddy (TLS termination + mTLS) — Apache httpd (WebDAV, write access) — no certbot sidecar needed.
 
 ## How it works
 
 Munki is a macOS software management system. The server is a plain static file server. Mac clients (`munkitools`) fetch manifests and packages from it over HTTPS.
 
-Authentication is handled via mTLS: the server only accepts connections from Macs that present a valid client certificate signed by the local CA. The certificate is deployed to Macs via Intune.
+Authentication is handled via mTLS: the server only accepts connections from clients that present a valid certificate signed by the local CA.
 
 ```
-Mac (munkitools)
-  ├── presents client cert (from system keychain, deployed via Intune)
-  └── fetches from https://your-domain/
+Mac clients (munkitools)
+  ├── presents munki-client cert (deployed via Intune shell script)
+  └── fetches from https://MUNKI_DOMAIN/  →  Caddy (mTLS, read-only)
 
-Caddy
-  ├── terminates TLS (Let's Encrypt via TLS-ALPN-01)
-  ├── verifies client cert against ca.crt
-  └── serves /srv/munki/repo as static files
+Admin Mac (MunkiAdmin / Finder / munkiimport)
+  ├── presents munki-admin cert (deployed via Intune config profile → keychain)
+  └── mounts https://MANAGE_DOMAIN/  →  Caddy (mTLS)  →  Apache httpd (WebDAV, read-write)
+
+GitHub Actions (AutoPKG)
+  ├── presents github-actions cert (stored as GitHub secrets)
+  └── uploads via curl to https://MANAGE_DOMAIN/  →  Caddy (mTLS)  →  Apache httpd (WebDAV, read-write)
 ```
 
 ## Prerequisites
 
 - Docker with the Compose plugin
 - A domain managed by Cloudflare (see [DNS & DDNS setup](#dns--ddns-setup) below)
-- Port **443** reachable on the server (required for Let's Encrypt and HTTPS serving)
-- Port **80** reachable on the server (recommended for HTTP → HTTPS redirects)
+- Two DNS records: one for `MUNKI_DOMAIN`, one for `MANAGE_DOMAIN`
+- Port **443** reachable on the server
+- Port **80** reachable on the server (for HTTP → HTTPS redirects)
 - `openssl` and `python3` installed on the server
-- Intune for deploying the client certificate to Macs
+- Intune for deploying certificates to Macs
 
 > If the server is behind a NAT/router, forward ports 80 and 443 to it.
 
@@ -47,11 +51,10 @@ Fill in `.env`:
 
 ```
 MUNKI_DOMAIN=munki.example.com
+MANAGE_DOMAIN=munkimanage.example.com
 ACME_EMAIL=admin@example.com
 MUNKI_REPO_PATH=/srv/munki/repo
 CF_API_TOKEN=your_cloudflare_api_token
-SAMBA_USER=admin
-SAMBA_PASS=changeme
 MUNKI_CLIENT_IDENTIFIER=   # optional — leave empty to use machine serial number
 ```
 
@@ -64,23 +67,21 @@ bash setup.sh
 This will:
 - Create the munki repo directory structure at `MUNKI_REPO_PATH`
 - Generate a self-signed CA (`certs/ca.crt`, `certs/ca.key`)
-- Generate a shared client certificate PEM (`certs/munki-client.pem`)
-- Generate an Intune shell script (`certs/munki-client-deploy.sh`)
-- Generate a Munki preferences profile (`certs/munki-prefs.mobileconfig`)
-- Start the Caddy, Samba, and DDNS containers
+- Generate the munki client cert + Intune shell script + Munki preferences profile
+- Generate the admin client cert + `.p12` + Intune config profile
+- Generate the GitHub Actions cert + print base64 values for GitHub secrets
+- Start the Caddy, Apache httpd, and DDNS containers
 
-### 3. Deploy the client certificate via Intune
+### 3. Deploy certificates via Intune
 
-Two uploads to Intune — both assigned to the same Mac device group.
+#### Mac clients — all managed Macs
 
-**Upload 1 — Shell script (deploys the cert file):**
+**Upload 1 — Shell script (deploys cert file):**
 
 1. Intune → **Devices > macOS > Shell scripts > Add**
 2. Upload `certs/munki-client-deploy.sh`
 3. Run script as signed-in user: **No** (runs as root)
 4. Assign to your Mac device group
-
-This drops `munki_client.pem` onto each Mac at `/Library/Managed Installs/certs/munki_client.pem` as root, permissions 0600.
 
 **Upload 2 — Configuration profile (sets Munki preferences):**
 
@@ -89,9 +90,55 @@ This drops `munki_client.pem` onto each Mac at `/Library/Managed Installs/certs/
 3. Upload `certs/munki-prefs.mobileconfig`
 4. Assign to your Mac device group
 
-This sets `SoftwareRepoURL`, `UseClientCertificate = true`, and `ClientCertificatePath` so Munki knows where to find the cert file.
+#### Admin Macs — Admins group only
 
-> **ClientIdentifier** determines which Munki manifest a Mac receives. If left unset, Munki defaults to the machine's serial number. Set `MUNKI_CLIENT_IDENTIFIER` in `.env` before running `setup.sh` to embed a fixed value in the profile.
+**Upload 3 — Configuration profile (installs admin cert into keychain):**
+
+1. Intune → **Devices > macOS > Configuration profiles > Create profile**
+2. Platform: **macOS**, Profile type: **Templates > Custom**
+3. Upload `certs/munki-admin.mobileconfig`
+4. **Scope to your Admins device/user group only** — do not assign to all Macs
+
+Once deployed, macOS installs the cert into the Login keychain. Finder and MunkiAdmin present it automatically for mTLS — no password prompt.
+
+> **Manual alternative:** Double-click `certs/munki-admin.p12` and enter the password printed by `gen-admin.sh` to install it manually into your keychain.
+
+### 4. Connect as admin
+
+**Finder (for munkiimport):**
+
+1. Finder → Go → Connect to Server (⌘K)
+2. Enter `https://MANAGE_DOMAIN`
+3. macOS presents the admin cert from keychain automatically
+4. The repo mounts as a volume — use this path with `munkiimport` and `makecatalogs`
+
+**MunkiAdmin:**
+
+Point MunkiAdmin directly at `https://MANAGE_DOMAIN` as the repo URL.
+
+### 5. GitHub Actions — set secrets
+
+From the output of `setup.sh` (or re-run `scripts/gen-actions.sh`), add to your AutoPKG repo:
+
+- **`MUNKI_CLIENT_CERT`** — base64-encoded certificate
+- **`MUNKI_CLIENT_KEY`** — base64-encoded private key
+- **`MANAGE_DOMAIN`** — your management domain
+
+In your workflow:
+
+```yaml
+- name: Upload to Munki repo
+  env:
+    MUNKI_CLIENT_CERT: ${{ secrets.MUNKI_CLIENT_CERT }}
+    MUNKI_CLIENT_KEY: ${{ secrets.MUNKI_CLIENT_KEY }}
+    MANAGE_DOMAIN: ${{ secrets.MANAGE_DOMAIN }}
+  run: |
+    echo "$MUNKI_CLIENT_CERT" | base64 --decode > /tmp/munki.crt
+    echo "$MUNKI_CLIENT_KEY"  | base64 --decode > /tmp/munki.key
+    curl --cert /tmp/munki.crt --key /tmp/munki.key \
+         -T App.pkg "https://$MANAGE_DOMAIN/pkgs/apps/App.pkg"
+    rm /tmp/munki.crt /tmp/munki.key
+```
 
 ## Repo structure
 
@@ -104,33 +151,21 @@ This sets `SoftwareRepoURL`, `UseClientCertificate = true`, and `ClientCertifica
 └── pkgsinfo/            ← package metadata (plist files, generated by munkiimport)
 ```
 
-## Admin access via Samba
-
-The repo is exposed as a Samba share (`munki`) on the local network. This is how you manage packages, manifests, and pkgsinfo from your admin Mac using MunkiAdmin or munkiimport.
-
-**Connect from macOS:**
-
-1. Finder → Go → Connect to Server (⌘K)
-2. Enter `smb://pi-ip-address/munki`
-3. Authenticate with `SAMBA_USER` and `SAMBA_PASS` from your `.env`
-
-> Samba is local network only — never forward ports 139 or 445 on your router.
-
 ## Adding packages
 
-With the Samba share mounted on your admin Mac (e.g. at `/Volumes/munki`):
+With the WebDAV share mounted on your admin Mac (e.g. at `/Volumes/MANAGE_DOMAIN`):
 
 ```bash
 # Import a package
 munkiimport /path/to/App.pkg --subdirectory apps
 
 # Regenerate catalogs (must run after every import)
-makecatalogs /Volumes/munki
+makecatalogs /Volumes/MANAGE_DOMAIN
 ```
 
-Or use **MunkiAdmin** — point it at `/Volumes/munki` and manage everything via the GUI.
+Or use **MunkiAdmin** — point it at `https://MANAGE_DOMAIN` and manage everything via the GUI.
 
-Or run `makecatalogs` directly on the Pi via Docker:
+Or run `makecatalogs` directly on the server via Docker:
 
 ```bash
 docker run --rm \
@@ -141,56 +176,70 @@ docker run --rm \
 
 ## Certificate management
 
-### Regenerate client certificate
-
-If the client cert is compromised or expired:
+### Regenerate client certificate (Mac clients)
 
 ```bash
 rm certs/munki-client.*
 bash scripts/gen-client.sh
 ```
 
-Then re-upload both `certs/munki-client-deploy.sh` and `certs/munki-prefs.mobileconfig` to Intune.
-Macs will receive the new cert on the next shell script run and MDM sync.
+Re-upload `certs/munki-client-deploy.sh` and `certs/munki-prefs.mobileconfig` to Intune.
 
-### Regenerate everything (CA + client cert)
+### Regenerate admin certificate
+
+```bash
+rm certs/munki-admin.*
+bash scripts/gen-admin.sh
+```
+
+Re-upload `certs/munki-admin.mobileconfig` to Intune. Macs will receive the new cert on the next MDM sync.
+
+### Regenerate GitHub Actions certificate
+
+```bash
+rm certs/github-actions.*
+bash scripts/gen-actions.sh
+```
+
+Update `MUNKI_CLIENT_CERT` and `MUNKI_CLIENT_KEY` in your GitHub repo secrets.
+
+### Regenerate everything (CA + all certs)
 
 ```bash
 rm -rf certs/
 bash setup.sh
 ```
 
-This invalidates all existing client certs. Re-deploy the mobileconfig to all Macs.
+This invalidates all existing certs. Re-deploy all Intune profiles and update GitHub secrets.
 
 ## DNS & DDNS setup
 
-The server uses Cloudflare for DNS management and automatic DDNS (dynamic IP updates). Your domain can remain registered at any registrar — you only delegate DNS to Cloudflare.
+The server uses Cloudflare for DNS management and automatic DDNS. Your domain can remain registered at any registrar — you only delegate DNS to Cloudflare.
 
 ### One-time Cloudflare setup
 
 1. Create a free account at [cloudflare.com](https://cloudflare.com)
 2. Add your domain as a site — Cloudflare will scan existing DNS records
 3. Cloudflare gives you two nameservers — update them at your registrar
-4. In Cloudflare, create an A record: `munki` → your server's public IP
-   - Set to **DNS only (gray cloud)** — do NOT enable proxy (orange cloud), it breaks mTLS
+4. Create two A records pointing to your server's public IP:
+   - `munki` → your server's public IP
+   - `munkimanage` → your server's public IP (or whatever subdomains you chose)
+   - Set both to **DNS only (gray cloud)** — do NOT enable proxy (orange cloud), it breaks mTLS
 
 ### Cloudflare API token
 
-The DDNS container updates the A record automatically when your public IP changes.
+The DDNS container updates both A records automatically when your public IP changes.
 
 1. In Cloudflare: **My Profile → API Tokens → Create Token**
 2. Use the **Edit zone DNS** template
 3. Scope it to your zone only
 4. Copy the token into `.env` as `CF_API_TOKEN`
 
-The DDNS container checks every 5 minutes and updates the record if your IP has changed. No manual intervention needed.
-
-## MunkiWebAdmin
-
-A web UI for managing manifests. Planned as a separate container in this repo. Not yet implemented.
-
 ## Security notes
 
 - `certs/ca.key` never leaves the server. It is gitignored.
-- The shared client cert means all Macs use the same key pair. If a Mac is compromised, regenerate and redeploy. Per-device certs via Intune SCEP are a future option.
-- Caddy rejects any request without a valid client certificate — unauthenticated access returns a TLS error before any HTTP response.
+- `certs/munki-admin.p12` and `certs/munki-admin.mobileconfig` contain the admin private key — treat them as secrets. Both are gitignored.
+- `certs/github-actions.key` contains the Actions private key — gitignored. Store the base64 value only in GitHub secrets.
+- The shared munki client cert means all Macs use the same key pair. If a Mac is compromised, regenerate and redeploy. Per-device certs via Intune SCEP are a future option.
+- The admin cert should be scoped to Admins in Intune — it grants write access to the entire repo.
+- Caddy rejects any request without a valid client certificate — unauthenticated access returns a TLS error before any HTTP response, on both domains.

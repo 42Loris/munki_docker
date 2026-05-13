@@ -20,14 +20,15 @@ fi
 # shellcheck source=/dev/null
 source "$SCRIPT_DIR/.env"
 
-for var in MUNKI_DOMAIN ACME_EMAIL MUNKI_REPO_PATH CF_API_TOKEN SAMBA_USER SAMBA_PASS; do
+for var in MUNKI_DOMAIN MANAGE_DOMAIN ACME_EMAIL MUNKI_REPO_PATH CF_API_TOKEN; do
     if [ -z "${!var:-}" ]; then
         echo "ERROR: $var is not set in .env"
         exit 1
     fi
 done
 
-echo "Domain       : $MUNKI_DOMAIN"
+echo "Client domain: $MUNKI_DOMAIN"
+echo "Manage domain: $MANAGE_DOMAIN"
 echo "Repo path    : $MUNKI_REPO_PATH"
 echo ""
 
@@ -61,8 +62,8 @@ echo "--- Certificate Authority ---"
 bash "$SCRIPT_DIR/scripts/gen-ca.sh"
 echo ""
 
-# 5. Generate client cert + mobileconfig
-echo "--- Client Certificate ---"
+# 5. Generate client cert + mobileconfig (Mac clients)
+echo "--- Client Certificate (Mac clients) ---"
 if [ -f "$SCRIPT_DIR/certs/munki-client-deploy.sh" ]; then
     echo "Client cert already exists — skipping. Run scripts/gen-client.sh to regenerate."
 else
@@ -70,7 +71,17 @@ else
 fi
 echo ""
 
-# 6. Start containers
+# 6. Generate admin cert (WebDAV admin access)
+echo "--- Admin Certificate (WebDAV) ---"
+bash "$SCRIPT_DIR/scripts/gen-admin.sh"
+echo ""
+
+# 7. Generate GitHub Actions cert
+echo "--- GitHub Actions Certificate ---"
+bash "$SCRIPT_DIR/scripts/gen-actions.sh"
+echo ""
+
+# 8. Start containers
 echo "--- Starting containers ---"
 docker compose -f "$SCRIPT_DIR/docker-compose.yml" up -d
 
@@ -78,10 +89,25 @@ echo ""
 echo "=== Setup complete ==="
 echo ""
 echo "Next steps:"
-echo "  1. In Intune: Devices > macOS > Shell scripts > Add"
-echo "     Upload certs/munki-client-deploy.sh  (run as root)"
-echo "  2. In Intune: Devices > macOS > Configuration profiles > Create > Custom"
-echo "     Upload certs/munki-prefs.mobileconfig"
-echo "  3. Add packages to $MUNKI_REPO_PATH/pkgs/ and run makecatalogs"
+echo ""
+echo "  Mac clients (Intune — all managed Macs):"
+echo "    1. Devices > macOS > Shell scripts > Add"
+echo "       Upload certs/munki-client-deploy.sh  (run as root)"
+echo "    2. Devices > macOS > Configuration profiles > Create > Custom"
+echo "       Upload certs/munki-prefs.mobileconfig"
+echo ""
+echo "  Admin access (Intune — Admins group only):"
+echo "    3. Devices > macOS > Configuration profiles > Create > Custom"
+echo "       Upload certs/munki-admin.mobileconfig"
+echo "       Scope to Admins device/user group"
+echo "    Then: Finder > Go > Connect to Server > https://$MANAGE_DOMAIN"
+echo ""
+echo "  GitHub Actions:"
+echo "    4. Add MUNKI_CLIENT_CERT and MUNKI_CLIENT_KEY secrets to your AutoPKG repo"
+echo "       (values printed above by gen-actions.sh)"
+echo "       Also add MANAGE_DOMAIN=$MANAGE_DOMAIN as a secret"
+echo ""
+echo "  Packages:"
+echo "    5. Add packages via WebDAV mount and run makecatalogs"
 echo ""
 echo "Logs: docker compose logs -f"

@@ -8,6 +8,7 @@ services:
       - "443:443/udp"
     environment:
       - MUNKI_DOMAIN=${MUNKI_DOMAIN}
+      - MANAGE_DOMAIN=${MANAGE_DOMAIN}
       - ACME_EMAIL=${ACME_EMAIL}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
@@ -16,17 +17,12 @@ services:
       - caddy_config:/config
       - ${MUNKI_REPO_PATH}:/srv/munki/repo:ro
 
-  samba:
-    image: dperson/samba:latest
+  webdav:
+    image: httpd:alpine
     restart: unless-stopped
-    ports:
-      - "139:139"
-      - "445:445"
-    command: >-
-      -u "${SAMBA_USER};${SAMBA_PASS}"
-      -s "munki;/srv/munki/repo;yes;no;no;${SAMBA_USER}"
     volumes:
-      - ${MUNKI_REPO_PATH}:/srv/munki/repo
+      - ./conf/httpd-webdav.conf:/usr/local/apache2/conf/httpd.conf:ro
+      - ${MUNKI_REPO_PATH}:/usr/local/apache2/htdocs:rw
 
   ddns:
     image: favonia/cloudflare-ddns:latest
@@ -36,7 +32,7 @@ services:
       - no-new-privileges:true
     environment:
       - CF_API_TOKEN=${CF_API_TOKEN}
-      - DOMAINS=${MUNKI_DOMAIN}
+      - DOMAINS=${MUNKI_DOMAIN},${MANAGE_DOMAIN}
       - PROXIED=false
       - IP6_PROVIDER=none
 
