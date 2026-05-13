@@ -81,7 +81,7 @@ security import "\$P12_TMP" \\
     -A
 
 rm "\$P12_TMP"
-echo "Munki admin cert imported into System keychain."
+echo "Munki admin cert imported into Login keychain."
 DEPLOY
 
 chmod 600 "$MDM_DIR/$ADMIN_NAME-deploy.sh"
@@ -94,7 +94,7 @@ echo "  deploy script : $MDM_DIR/$ADMIN_NAME-deploy.sh"
 echo ""
 echo "MDM deployment (scope to Admins group only):"
 echo "  Devices > macOS > Shell scripts > Add"
-echo "  Upload: certs/mdm_upload/$ADMIN_NAME-deploy.sh  (run as root)"
+echo "  Upload: certs/mdm_upload/$ADMIN_NAME-deploy.sh  (run as signed-in user)"
 echo ""
 echo "  macOS imports the cert into the user's Login keychain."
 echo "  Finder and MunkiAdmin will present it automatically for mTLS."
