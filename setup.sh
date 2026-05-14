@@ -65,7 +65,11 @@ echo ""
 
 # 5. Generate client cert + mobileconfig (Mac clients)
 echo "--- Client Certificate (Mac clients) ---"
-bash "$SCRIPT_DIR/scripts/gen-client.sh"
+if [ -f "$SCRIPT_DIR/certs/munki-client.pem" ]; then
+    echo "Client cert already exists — skipping. Delete certs/munki-client.* to regenerate."
+else
+    bash "$SCRIPT_DIR/scripts/gen-client.sh"
+fi
 echo ""
 
 # 6. Generate WebDAV password hash
@@ -73,10 +77,12 @@ echo "--- WebDAV credentials ---"
 if [ -z "${WEBDAV_PASS_HASH:-}" ]; then
     echo "Generating bcrypt hash for WebDAV password..."
     WEBDAV_PASS_HASH=$(docker run --rm caddy:2-alpine caddy hash-password --plaintext "$WEBDAV_PASS")
+    # Escape $ signs so Docker Compose doesn't interpret them as variable references
+    WEBDAV_PASS_HASH_ESCAPED="${WEBDAV_PASS_HASH//\$/\$\$}"
     if grep -q "^WEBDAV_PASS_HASH=" "$SCRIPT_DIR/.env"; then
-        sed -i "s|^WEBDAV_PASS_HASH=.*|WEBDAV_PASS_HASH=$WEBDAV_PASS_HASH|" "$SCRIPT_DIR/.env"
+        sed -i "s|^WEBDAV_PASS_HASH=.*|WEBDAV_PASS_HASH=$WEBDAV_PASS_HASH_ESCAPED|" "$SCRIPT_DIR/.env"
     else
-        echo "WEBDAV_PASS_HASH=$WEBDAV_PASS_HASH" >> "$SCRIPT_DIR/.env"
+        echo "WEBDAV_PASS_HASH=$WEBDAV_PASS_HASH_ESCAPED" >> "$SCRIPT_DIR/.env"
     fi
     echo "  Hash written to .env"
 else
