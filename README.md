@@ -10,7 +10,7 @@ Munki is a macOS software management system. The server is a plain static file s
 
 ```
 Mac clients (munkitools)
-  ├── presents munki-client cert (deployed via Intune shell script)
+  ├── presents munki-client cert (deployed via MDM)
   └── fetches from https://MUNKI_DOMAIN/  →  Caddy (mTLS, read-only)
 
 Admin Mac (MunkiAdmin / Finder / munkiimport)
@@ -25,12 +25,12 @@ GitHub Actions (AutoPKG)
 ## Prerequisites
 
 - Docker with the Compose plugin
-- A domain managed by Cloudflare (see [DNS & DDNS setup](#dns--ddns-setup) below)
+- A domain with two DNS A records pointing to your server (Cloudflare recommended — see [DNS & DDNS setup](#dns--ddns-setup) below)
 - Two DNS records: one for `MUNKI_DOMAIN`, one for `MANAGE_DOMAIN`
 - Port **443** reachable on the server
 - Port **80** reachable on the server (for HTTP → HTTPS redirects)
 - `openssl` and `python3` installed on the server
-- Intune for deploying certificates to Macs
+- An MDM solution capable of deploying shell scripts and configuration profiles to macOS (e.g. Intune, Jamf, Mosyle, Kandji)
 
 > If the server is behind a NAT/router, forward ports 80 and 443 to it.
 
@@ -52,10 +52,11 @@ MUNKI_DOMAIN=munki.example.com
 MANAGE_DOMAIN=munkimanage.example.com
 ACME_EMAIL=admin@example.com
 MUNKI_REPO_PATH=/srv/munki/repo
-CF_API_TOKEN=your_cloudflare_api_token
 WEBDAV_USER=munki-admin
 WEBDAV_PASS=your_strong_password
 MUNKI_CLIENT_IDENTIFIER=   # optional — leave empty to use machine serial number
+ENABLE_DDNS=false          # set to true if you want automatic DNS updates via Cloudflare
+CF_API_TOKEN=              # required only when ENABLE_DDNS=true
 ```
 
 ### 2. Run setup
@@ -67,34 +68,27 @@ bash setup.sh
 This will:
 - Create the munki repo directory structure at `MUNKI_REPO_PATH`
 - Generate a self-signed CA (`certs/ca.crt`, `certs/ca.key`)
-- Generate the munki client cert + Intune shell script + Munki preferences profile
+- Generate the munki client cert + MDM shell script + Munki preferences profile
 - Generate a bcrypt hash of `WEBDAV_PASS` and write it to `.env`
 - Start the Caddy, Apache httpd, and DDNS containers
 
-All files needed for Intune are in `certs/mdm_upload/` automatically.
+All files needed for MDM deployment are in `certs/mdm_upload/` automatically.
 
-### 3. Deploy certificates via Intune
+### 3. Deploy certificates via MDM
 
 All uploads come from `certs/mdm_upload/`:
 
-| File | Intune section | Scope |
+| File | Type | Scope |
 |---|---|---|
-| `munki-client-deploy.sh` | Devices > macOS > Shell scripts (run as root) | All managed Macs |
-| `munki-prefs.mobileconfig` | Devices > macOS > Configuration profiles > Custom | All managed Macs |
+| `munki-client-deploy.sh` | Shell script (run as root) | All managed Macs |
+| `munki-prefs.mobileconfig` | Configuration profile | All managed Macs |
 
-**Upload 1 — Shell script (deploys cert file):**
+Deploy these two files through your MDM of choice:
 
-1. Intune → **Devices > macOS > Shell scripts > Add**
-2. Upload `certs/mdm_upload/munki-client-deploy.sh`
-3. Run script as signed-in user: **No** (runs as root)
-4. Assign to your Mac device group
+- **Shell script** — deploys the client certificate to `/Library/Managed Preferences/`. Must run as root.
+- **Configuration profile** — sets Munki preferences (server URL, client cert path, optional client identifier).
 
-**Upload 2 — Configuration profile (sets Munki preferences):**
-
-1. Intune → **Devices > macOS > Configuration profiles > Create profile**
-2. Platform: **macOS**, Profile type: **Templates > Custom**
-3. Upload `certs/mdm_upload/munki-prefs.mobileconfig`
-4. Assign to your Mac device group
+The steps vary by MDM. For example, in Intune: Devices > macOS > Shell scripts for the script, and Devices > macOS > Configuration profiles > Custom for the `.mobileconfig`.
 
 ### 4. Connect as admin
 
@@ -173,7 +167,7 @@ rm certs/munki-client.*
 bash scripts/gen-client.sh
 ```
 
-Re-upload `certs/mdm_upload/munki-client-deploy.sh` and `certs/mdm_upload/munki-prefs.mobileconfig` to Intune.
+Re-deploy `certs/mdm_upload/munki-client-deploy.sh` and `certs/mdm_upload/munki-prefs.mobileconfig` via your MDM.
 
 ### Rotate WebDAV password
 
@@ -189,7 +183,7 @@ rm -rf certs/
 bash setup.sh
 ```
 
-This invalidates all existing client certs. Re-deploy all Intune profiles.
+This invalidates all existing client certs. Re-deploy all MDM profiles.
 
 ## DNS & DDNS setup
 
@@ -218,6 +212,6 @@ The DDNS container updates both A records automatically when your public IP chan
 
 - `certs/ca.key` never leaves the server. It is gitignored.
 - `WEBDAV_PASS` and `WEBDAV_PASS_HASH` in `.env` are gitignored — treat them as secrets.
-- The shared munki client cert means all Macs use the same key pair. If a Mac is compromised, regenerate and redeploy. Per-device certs via Intune SCEP are a future option.
+- The shared munki client cert means all Macs use the same key pair. If a Mac is compromised, regenerate and redeploy. Per-device certs via MDM SCEP (e.g. Intune SCEP, Jamf ADCS connector) are a future option.
 - Caddy rejects any request to `MUNKI_DOMAIN` without a valid client certificate — unauthenticated access returns a TLS error.
 - `MANAGE_DOMAIN` requires a valid username and password over HTTPS — use a strong password.

@@ -20,12 +20,17 @@ fi
 # shellcheck source=/dev/null
 source "$SCRIPT_DIR/.env"
 
-for var in MUNKI_DOMAIN MANAGE_DOMAIN ACME_EMAIL MUNKI_REPO_PATH CF_API_TOKEN WEBDAV_USER WEBDAV_PASS; do
+for var in MUNKI_DOMAIN MANAGE_DOMAIN ACME_EMAIL MUNKI_REPO_PATH WEBDAV_USER WEBDAV_PASS; do
     if [ -z "${!var:-}" ]; then
         echo "ERROR: $var is not set in .env"
         exit 1
     fi
 done
+
+if [ "${ENABLE_DDNS:-false}" = "true" ] && [ -z "${CF_API_TOKEN:-}" ]; then
+    echo "ERROR: CF_API_TOKEN is required when ENABLE_DDNS=true"
+    exit 1
+fi
 
 echo "Client domain: $MUNKI_DOMAIN"
 echo "Manage domain: $MANAGE_DOMAIN"
@@ -92,7 +97,13 @@ echo ""
 
 # 7. Start containers
 echo "--- Starting containers ---"
-docker compose -f "$SCRIPT_DIR/docker-compose.yml" up -d
+COMPOSE_PROFILES=""
+if [ "${ENABLE_DDNS:-false}" = "true" ]; then
+    COMPOSE_PROFILES="--profile ddns"
+    echo "  DDNS enabled — starting cloudflare-ddns container"
+fi
+# shellcheck disable=SC2086
+docker compose -f "$SCRIPT_DIR/docker-compose.yml" $COMPOSE_PROFILES up -d
 
 echo ""
 echo "=== Setup complete ==="
