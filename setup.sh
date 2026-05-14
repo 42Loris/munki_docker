@@ -20,7 +20,7 @@ fi
 # shellcheck source=/dev/null
 source "$SCRIPT_DIR/.env"
 
-for var in MUNKI_DOMAIN MANAGE_DOMAIN ACME_EMAIL MUNKI_REPO_PATH CF_API_TOKEN; do
+for var in MUNKI_DOMAIN MANAGE_DOMAIN ACME_EMAIL MUNKI_REPO_PATH CF_API_TOKEN WEBDAV_USER WEBDAV_PASS; do
     if [ -z "${!var:-}" ]; then
         echo "ERROR: $var is not set in .env"
         exit 1
@@ -30,6 +30,7 @@ done
 echo "Client domain: $MUNKI_DOMAIN"
 echo "Manage domain: $MANAGE_DOMAIN"
 echo "Repo path    : $MUNKI_REPO_PATH"
+echo "WebDAV user  : $WEBDAV_USER"
 echo ""
 
 # 2. Check prerequisites
@@ -64,24 +65,26 @@ echo ""
 
 # 5. Generate client cert + mobileconfig (Mac clients)
 echo "--- Client Certificate (Mac clients) ---"
-if [ -f "$SCRIPT_DIR/certs/munki-client-deploy.sh" ]; then
-    echo "Client cert already exists — skipping. Run scripts/gen-client.sh to regenerate."
+bash "$SCRIPT_DIR/scripts/gen-client.sh"
+echo ""
+
+# 6. Generate WebDAV password hash
+echo "--- WebDAV credentials ---"
+if [ -z "${WEBDAV_PASS_HASH:-}" ]; then
+    echo "Generating bcrypt hash for WebDAV password..."
+    WEBDAV_PASS_HASH=$(docker run --rm caddy:2-alpine caddy hash-password --plaintext "$WEBDAV_PASS")
+    if grep -q "^WEBDAV_PASS_HASH=" "$SCRIPT_DIR/.env"; then
+        sed -i "s|^WEBDAV_PASS_HASH=.*|WEBDAV_PASS_HASH=$WEBDAV_PASS_HASH|" "$SCRIPT_DIR/.env"
+    else
+        echo "WEBDAV_PASS_HASH=$WEBDAV_PASS_HASH" >> "$SCRIPT_DIR/.env"
+    fi
+    echo "  Hash written to .env"
 else
-    bash "$SCRIPT_DIR/scripts/gen-client.sh"
+    echo "  Password hash already set — skipping."
 fi
 echo ""
 
-# 6. Generate admin cert (WebDAV admin access)
-echo "--- Admin Certificate (WebDAV) ---"
-bash "$SCRIPT_DIR/scripts/gen-admin.sh"
-echo ""
-
-# 7. Generate GitHub Actions cert
-echo "--- GitHub Actions Certificate ---"
-bash "$SCRIPT_DIR/scripts/gen-actions.sh"
-echo ""
-
-# 8. Start containers
+# 7. Start containers
 echo "--- Starting containers ---"
 docker compose -f "$SCRIPT_DIR/docker-compose.yml" up -d
 
@@ -92,22 +95,25 @@ echo "Next steps:"
 echo ""
 echo "  Mac clients (Intune — all managed Macs):"
 echo "    1. Devices > macOS > Shell scripts > Add"
-echo "       Upload certs/munki-client-deploy.sh  (run as root)"
+echo "       Upload certs/mdm_upload/munki-client-deploy.sh  (run as root)"
 echo "    2. Devices > macOS > Configuration profiles > Create > Custom"
-echo "       Upload certs/munki-prefs.mobileconfig"
+echo "       Upload certs/mdm_upload/munki-prefs.mobileconfig"
 echo ""
-echo "  Admin access (Intune — Admins group only):"
-echo "    3. Devices > macOS > Configuration profiles > Create > Custom"
-echo "       Upload certs/munki-admin.mobileconfig"
-echo "       Scope to Admins device/user group"
-echo "    Then: Finder > Go > Connect to Server > https://$MANAGE_DOMAIN"
+echo "  Admin access:"
+echo "    Finder > Go > Connect to Server > https://$MANAGE_DOMAIN"
+echo "    Username: $WEBDAV_USER"
+echo "    Password: $WEBDAV_PASS"
 echo ""
-echo "  GitHub Actions:"
-echo "    4. Add MUNKI_CLIENT_CERT and MUNKI_CLIENT_KEY secrets to your AutoPKG repo"
-echo "       (values printed above by gen-actions.sh)"
-echo "       Also add MANAGE_DOMAIN=$MANAGE_DOMAIN as a secret"
+echo "  GitHub Actions — add these secrets to your AutoPKG repo:"
+echo "    MANAGE_DOMAIN  = $MANAGE_DOMAIN"
+echo "    WEBDAV_USER    = $WEBDAV_USER"
+echo "    WEBDAV_PASS    = $WEBDAV_PASS"
+echo ""
+echo "    curl usage:"
+echo "      curl -u \"\$WEBDAV_USER:\$WEBDAV_PASS\" \\"
+echo "           -T App.pkg \"https://\$MANAGE_DOMAIN/pkgs/apps/App.pkg\""
 echo ""
 echo "  Packages:"
-echo "    5. Add packages via WebDAV mount and run makecatalogs"
+echo "    Add packages via WebDAV mount and run makecatalogs"
 echo ""
 echo "Logs: docker compose logs -f"

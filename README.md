@@ -1,14 +1,12 @@
 # Munki Docker Container
 
-A self-hosted [Munki](https://github.com/munki/munki) server running on Docker. Serves the munki repo over HTTPS with mTLS client certificate authentication. Provides a WebDAV management endpoint for admin access and GitHub Actions automation.
+A self-hosted [Munki](https://github.com/munki/munki) server running on Docker. Serves the munki repo over HTTPS with mTLS client certificate authentication for Mac clients, and HTTPS with Basic Auth for admin write access.
 
-**Stack:** Caddy (TLS termination + mTLS) — Apache httpd (WebDAV, write access) — no certbot sidecar needed.
+**Stack:** Caddy (TLS termination) — Apache httpd (WebDAV, write access) — no certbot sidecar needed.
 
 ## How it works
 
 Munki is a macOS software management system. The server is a plain static file server. Mac clients (`munkitools`) fetch manifests and packages from it over HTTPS.
-
-Authentication is handled via mTLS: the server only accepts connections from clients that present a valid certificate signed by the local CA.
 
 ```
 Mac clients (munkitools)
@@ -16,12 +14,12 @@ Mac clients (munkitools)
   └── fetches from https://MUNKI_DOMAIN/  →  Caddy (mTLS, read-only)
 
 Admin Mac (MunkiAdmin / Finder / munkiimport)
-  ├── presents munki-admin cert (deployed via Intune config profile → keychain)
-  └── mounts https://MANAGE_DOMAIN/  →  Caddy (mTLS)  →  Apache httpd (WebDAV, read-write)
+  ├── username + password (Basic Auth)
+  └── mounts https://MANAGE_DOMAIN/  →  Caddy (HTTPS + Basic Auth)  →  Apache httpd (WebDAV, read-write)
 
 GitHub Actions (AutoPKG)
-  ├── presents github-actions cert (stored as GitHub secrets)
-  └── uploads via curl to https://MANAGE_DOMAIN/  →  Caddy (mTLS)  →  Apache httpd (WebDAV, read-write)
+  ├── username + password (Basic Auth, stored as secrets)
+  └── uploads via curl to https://MANAGE_DOMAIN/  →  Caddy  →  Apache httpd (WebDAV, read-write)
 ```
 
 ## Prerequisites
@@ -55,6 +53,8 @@ MANAGE_DOMAIN=munkimanage.example.com
 ACME_EMAIL=admin@example.com
 MUNKI_REPO_PATH=/srv/munki/repo
 CF_API_TOKEN=your_cloudflare_api_token
+WEBDAV_USER=munki-admin
+WEBDAV_PASS=your_strong_password
 MUNKI_CLIENT_IDENTIFIER=   # optional — leave empty to use machine serial number
 ```
 
@@ -68,11 +68,10 @@ This will:
 - Create the munki repo directory structure at `MUNKI_REPO_PATH`
 - Generate a self-signed CA (`certs/ca.crt`, `certs/ca.key`)
 - Generate the munki client cert + Intune shell script + Munki preferences profile
-- Generate the admin client cert + Intune shell script (imports into System keychain)
-- Generate the GitHub Actions cert + print base64 values for GitHub secrets
+- Generate a bcrypt hash of `WEBDAV_PASS` and write it to `.env`
 - Start the Caddy, Apache httpd, and DDNS containers
 
-All files needed for Intune are copied to `certs/mdm_upload/` automatically — one place for everything you need to upload to your MDM.
+All files needed for Intune are in `certs/mdm_upload/` automatically.
 
 ### 3. Deploy certificates via Intune
 
@@ -82,9 +81,6 @@ All uploads come from `certs/mdm_upload/`:
 |---|---|---|
 | `munki-client-deploy.sh` | Devices > macOS > Shell scripts (run as root) | All managed Macs |
 | `munki-prefs.mobileconfig` | Devices > macOS > Configuration profiles > Custom | All managed Macs |
-| `munki-admin-deploy.sh` | Devices > macOS > Shell scripts (run as root) | Admins group only |
-
-#### Mac clients — all managed Macs
 
 **Upload 1 — Shell script (deploys cert file):**
 
@@ -100,54 +96,38 @@ All uploads come from `certs/mdm_upload/`:
 3. Upload `certs/mdm_upload/munki-prefs.mobileconfig`
 4. Assign to your Mac device group
 
-#### Admin Macs — Admins group only
-
-**Upload 3 — Shell script (imports admin cert into System keychain):**
-
-1. Intune → **Devices > macOS > Shell scripts > Add**
-2. Upload `certs/mdm_upload/munki-admin-deploy.sh`
-3. Run script as signed-in user: **No** (runs as root)
-4. **Scope to your Admins device/user group only** — do not assign to all Macs
-
-macOS imports the cert into the System keychain. Finder and MunkiAdmin present it automatically for mTLS — no password prompt.
-
-> **Manual alternative:** Double-click `certs/munki-admin.p12` and enter the password printed by `gen-admin.sh` to install it into your keychain.
-
 ### 4. Connect as admin
 
 **Finder (for munkiimport):**
 
 1. Finder → Go → Connect to Server (⌘K)
 2. Enter `https://MANAGE_DOMAIN`
-3. macOS presents the admin cert from keychain automatically
+3. Enter username and password when prompted — macOS saves them to keychain
 4. The repo mounts as a volume — use this path with `munkiimport` and `makecatalogs`
 
 **MunkiAdmin:**
 
-Point MunkiAdmin directly at `https://MANAGE_DOMAIN` as the repo URL.
+Point MunkiAdmin directly at `https://MANAGE_DOMAIN` as the repo URL and enter credentials when prompted.
 
 ### 5. GitHub Actions — set secrets
 
-From the output of `setup.sh` (or re-run `scripts/gen-actions.sh`), add to your AutoPKG repo:
+Add these to your AutoPKG repo (Settings > Secrets and variables > Actions):
 
-- **`MUNKI_CLIENT_CERT`** — base64-encoded certificate
-- **`MUNKI_CLIENT_KEY`** — base64-encoded private key
 - **`MANAGE_DOMAIN`** — your management domain
+- **`WEBDAV_USER`** — WebDAV username (same as `WEBDAV_USER` in `.env`)
+- **`WEBDAV_PASS`** — WebDAV password (same as `WEBDAV_PASS` in `.env`)
 
 In your workflow:
 
 ```yaml
 - name: Upload to Munki repo
   env:
-    MUNKI_CLIENT_CERT: ${{ secrets.MUNKI_CLIENT_CERT }}
-    MUNKI_CLIENT_KEY: ${{ secrets.MUNKI_CLIENT_KEY }}
     MANAGE_DOMAIN: ${{ secrets.MANAGE_DOMAIN }}
+    WEBDAV_USER: ${{ secrets.WEBDAV_USER }}
+    WEBDAV_PASS: ${{ secrets.WEBDAV_PASS }}
   run: |
-    echo "$MUNKI_CLIENT_CERT" | base64 --decode > /tmp/munki.crt
-    echo "$MUNKI_CLIENT_KEY"  | base64 --decode > /tmp/munki.key
-    curl --cert /tmp/munki.crt --key /tmp/munki.key \
+    curl -u "$WEBDAV_USER:$WEBDAV_PASS" \
          -T App.pkg "https://$MANAGE_DOMAIN/pkgs/apps/App.pkg"
-    rm /tmp/munki.crt /tmp/munki.key
 ```
 
 ## Repo structure
@@ -193,25 +173,14 @@ rm certs/munki-client.*
 bash scripts/gen-client.sh
 ```
 
-Re-upload `certs/munki-client-deploy.sh` and `certs/munki-prefs.mobileconfig` to Intune.
+Re-upload `certs/mdm_upload/munki-client-deploy.sh` and `certs/mdm_upload/munki-prefs.mobileconfig` to Intune.
 
-### Regenerate admin certificate
+### Rotate WebDAV password
 
-```bash
-rm certs/munki-admin.*
-bash scripts/gen-admin.sh
-```
-
-Re-upload `certs/mdm_upload/munki-admin-deploy.sh` to Intune. Macs will receive the new cert on the next shell script run.
-
-### Regenerate GitHub Actions certificate
-
-```bash
-rm certs/github-actions.*
-bash scripts/gen-actions.sh
-```
-
-Update `MUNKI_CLIENT_CERT` and `MUNKI_CLIENT_KEY` in your GitHub repo secrets.
+1. Update `WEBDAV_PASS` in `.env`
+2. Clear the old hash: set `WEBDAV_PASS_HASH=` in `.env`
+3. Re-run `setup.sh` — it will regenerate the hash and restart Caddy
+4. Update `WEBDAV_PASS` in your GitHub repo secrets
 
 ### Regenerate everything (CA + all certs)
 
@@ -220,7 +189,7 @@ rm -rf certs/
 bash setup.sh
 ```
 
-This invalidates all existing certs. Re-deploy all Intune profiles and update GitHub secrets.
+This invalidates all existing client certs. Re-deploy all Intune profiles.
 
 ## DNS & DDNS setup
 
@@ -234,7 +203,7 @@ The server uses Cloudflare for DNS management and automatic DDNS. Your domain ca
 4. Create two A records pointing to your server's public IP:
    - `munki` → your server's public IP
    - `munkimanage` → your server's public IP (or whatever subdomains you chose)
-   - Set both to **DNS only (gray cloud)** — do NOT enable proxy (orange cloud), it breaks mTLS
+   - Set both to **DNS only (gray cloud)** — do NOT enable proxy (orange cloud), it breaks mTLS on the client domain
 
 ### Cloudflare API token
 
@@ -248,8 +217,7 @@ The DDNS container updates both A records automatically when your public IP chan
 ## Security notes
 
 - `certs/ca.key` never leaves the server. It is gitignored.
-- `certs/munki-admin.p12` and `certs/munki-admin.mobileconfig` contain the admin private key — treat them as secrets. Both are gitignored.
-- `certs/github-actions.key` contains the Actions private key — gitignored. Store the base64 value only in GitHub secrets.
+- `WEBDAV_PASS` and `WEBDAV_PASS_HASH` in `.env` are gitignored — treat them as secrets.
 - The shared munki client cert means all Macs use the same key pair. If a Mac is compromised, regenerate and redeploy. Per-device certs via Intune SCEP are a future option.
-- The admin cert should be scoped to Admins in Intune — it grants write access to the entire repo.
-- Caddy rejects any request without a valid client certificate — unauthenticated access returns a TLS error before any HTTP response, on both domains.
+- Caddy rejects any request to `MUNKI_DOMAIN` without a valid client certificate — unauthenticated access returns a TLS error.
+- `MANAGE_DOMAIN` requires a valid username and password over HTTPS — use a strong password.
