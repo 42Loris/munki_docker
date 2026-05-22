@@ -20,7 +20,7 @@ services:
       - ${MUNKI_REPO_PATH}:/srv/munki/repo:ro
 
   webdav:
-    image: httpd:alpine
+    image: httpd:2.4
     restart: unless-stopped
     volumes:
       - ./conf/httpd-webdav.conf:/usr/local/apache2/conf/httpd.conf:ro
