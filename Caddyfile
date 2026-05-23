@@ -13,7 +13,9 @@
 }
 
 {$MANAGE_DOMAIN} {
-    tls {$ACME_EMAIL}
+    tls {$ACME_EMAIL} {
+        alpn http/1.1
+    }
 
     basic_auth {
         {$WEBDAV_USER} {$WEBDAV_PASS_HASH}
