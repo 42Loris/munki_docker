@@ -22,6 +22,8 @@ services:
   webdav:
     image: httpd:2.4
     restart: unless-stopped
+    ports:
+      - "8080:80"
     command: sh -c "mkdir -p /var/lock/davlock && chown www-data:www-data /var/lock/davlock && httpd-foreground"
     volumes:
       - ./conf/httpd-webdav.conf:/usr/local/apache2/conf/httpd.conf:ro
