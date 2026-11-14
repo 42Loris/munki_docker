@@ -103,27 +103,6 @@ The steps vary by MDM. For example, in Intune: Devices > macOS > Shell scripts f
 
 Point MunkiAdmin directly at `https://MANAGE_DOMAIN` as the repo URL and enter credentials when prompted.
 
-### 5. GitHub Actions — set secrets
-
-Add these to your AutoPKG repo (Settings > Secrets and variables > Actions):
-
-- **`MANAGE_DOMAIN`** — your management domain
-- **`WEBDAV_USER`** — WebDAV username (same as `WEBDAV_USER` in `.env`)
-- **`WEBDAV_PASS`** — WebDAV password (same as `WEBDAV_PASS` in `.env`)
-
-In your workflow:
-
-```yaml
-- name: Upload to Munki repo
-  env:
-    MANAGE_DOMAIN: ${{ secrets.MANAGE_DOMAIN }}
-    WEBDAV_USER: ${{ secrets.WEBDAV_USER }}
-    WEBDAV_PASS: ${{ secrets.WEBDAV_PASS }}
-  run: |
-    curl -u "$WEBDAV_USER:$WEBDAV_PASS" \
-         -T App.pkg "https://$MANAGE_DOMAIN/pkgs/apps/App.pkg"
-```
-
 ## Repo structure
 
 ```
