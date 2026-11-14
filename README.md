@@ -39,7 +39,7 @@ GitHub Actions (AutoPKG)
 ### 1. Clone and configure
 
 ```bash
-git clone https://github.com/42Loris/munki_docker_container
+git clone https://github.com/42Loris/munki_docker
 cd munki_docker_container
 cp env.example .env
 nano .env
