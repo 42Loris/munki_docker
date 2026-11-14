@@ -21,5 +21,7 @@
         {$WEBDAV_USER} {$WEBDAV_PASS_HASH}
     }
 
-    reverse_proxy webdav:80
+    reverse_proxy webdav:80 {
+    header_up If "^[(](<opaquelocktoken:[^>]+>)[)]$" "<https://{$MANAGE_DOMAIN}{http.request.uri}> ($1)"
+}
 }
